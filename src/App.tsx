@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense, lazy } from 'react';
 import {
   Shield, AlertTriangle, Radio, Users, Crosshair, BarChart2,
   Clock, Volume2, VolumeX, Key, Play, Pause,
   Plus, CheckCircle, Zap, Compass, Search, Award, AlertCircle,
   MapPin, X, Sparkles, RotateCw, ExternalLink, Activity, Target,
-  ChevronRight, RefreshCw, Layers, Eye, Filter
+  ChevronRight, RefreshCw, Layers, Eye, Filter, Box
 } from 'lucide-react';
+
+const Spline = lazy(() => import('@splinetool/react-spline'));
 
 // ============================================================================
 // TYPES & DATA STRUCTURES
@@ -1323,6 +1325,7 @@ function CommandCenterTab({
   filteredHeroes, onOpenBuilder, onEscalate, onResolve, onOpenCreateModal
 }: CommandCenterTabProps) {
   const [threatFilter, setThreatFilter] = useState<'ALL' | 'ACTIVE' | 'CONTAINED'>('ALL');
+  const [viewportMode, setViewportMode] = useState<'CANVAS_GLOBE' | 'SPLINE_3D'>('CANVAS_GLOBE');
 
   const sortedCrises = useMemo(() => {
     return [...crises]
@@ -1494,21 +1497,48 @@ function CommandCenterTab({
               S.H.I.E.L.D. ORBITAL SATELLITE TELEMETRY
             </span>
           </div>
-          <div className="hidden sm:flex items-center space-x-3 text-[10px] text-zinc-400 font-mono">
-            <span>GRID: LAT/LNG WGS-84</span>
-            <span className="text-[#38BDF8]">SYS.ONLINE</span>
+
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => { audio.playClick(); setViewportMode('CANVAS_GLOBE'); }}
+              className={`px-2.5 py-1 text-[10px] font-bold uppercase transition-all chamfer-sm flex items-center space-x-1.5 ${
+                viewportMode === 'CANVAS_GLOBE'
+                  ? 'bg-[#FF6A1A] text-white shadow-[0_0_8px_rgba(255,106,26,0.4)]'
+                  : 'bg-white/5 text-zinc-400 hover:text-white border border-white/10'
+              }`}
+            >
+              <Compass className="w-3 h-3" />
+              <span>Canvas Globe</span>
+            </button>
+            <button
+              onClick={() => { audio.playClick(); setViewportMode('SPLINE_3D'); }}
+              className={`px-2.5 py-1 text-[10px] font-bold uppercase transition-all chamfer-sm flex items-center space-x-1.5 ${
+                viewportMode === 'SPLINE_3D'
+                  ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_12px_rgba(0,240,255,0.4)]'
+                  : 'bg-white/5 text-zinc-400 hover:text-white border border-white/10'
+              }`}
+            >
+              <Box className="w-3 h-3 text-cyan-300" />
+              <span>Spline 3D Hologram</span>
+            </button>
           </div>
         </div>
 
-        {/* 3D Canvas Viewport */}
+        {/* 3D Viewport Area */}
         <div className="flex-1 relative bg-[#03060C] overflow-hidden">
-          <EarthGlobeCanvas
-            crises={crises}
-            selectedCrisisId={selectedCrisisId}
-            onSelectCrisis={onSelectCrisis}
-            focusedLocation={focusedLocation}
-            activeMissions={activeMissions}
-          />
+          {viewportMode === 'CANVAS_GLOBE' ? (
+            <EarthGlobeCanvas
+              crises={crises}
+              selectedCrisisId={selectedCrisisId}
+              onSelectCrisis={onSelectCrisis}
+              focusedLocation={focusedLocation}
+              activeMissions={activeMissions}
+            />
+          ) : (
+            <SplineHologramViewport
+              selectedCrisis={crises.find(c => c.id === selectedCrisisId)}
+            />
+          )}
         </div>
 
         {/* Active Missions Timeline Deck */}
@@ -1776,6 +1806,187 @@ const CONTINENTS_DATA: [number, number][][] = [
     [-72, 168], [-78, 175], [-77, 180], [-90, 180], [-90, -180]
   ]
 ];
+
+// ============================================================================
+// SPLINE 3D HOLOGRAPHIC VIEWPORT
+// ============================================================================
+interface SplineHologramViewportProps {
+  selectedCrisis?: Crisis;
+}
+
+const SPLINE_PRESETS = [
+  { name: 'Holo Cyber Core', url: 'https://prod.spline.design/6Wq1Q7YGyM-iab9i/scene.splinecode' },
+  { name: 'Quantum Node', url: 'https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode' }
+];
+
+function SplineHologramViewport({ selectedCrisis }: SplineHologramViewportProps) {
+  const [sceneUrl, setSceneUrl] = useState<string>(SPLINE_PRESETS[0].url);
+  const [customInput, setCustomInput] = useState<string>('');
+  const [showUrlModal, setShowUrlModal] = useState<boolean>(false);
+  const [loadKey, setLoadKey] = useState<number>(0);
+
+  const reloadScene = () => {
+    audio.playClick();
+    setLoadKey(prev => prev + 1);
+  };
+
+  const handleApplyCustomUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customInput.trim()) return;
+    audio.playClick();
+    setSceneUrl(customInput.trim());
+    setShowUrlModal(false);
+    setLoadKey(prev => prev + 1);
+  };
+
+  return (
+    <div className="w-full h-full relative bg-[#040711] overflow-hidden">
+      {/* 3D Spline Scene with Suspense & Fallback */}
+      <Suspense
+        fallback={
+          <div className="w-full h-full flex flex-col items-center justify-center space-y-3 bg-[#03060C]">
+            <div className="w-14 h-14 border-2 border-cyan-500/20 border-t-[#00F0FF] rounded-full animate-spin" />
+            <span className="font-display-tech text-xs tracking-widest uppercase text-cyan-400 font-bold animate-pulse">
+              STREAMING 3D HOLOGRAPHIC MATRIX...
+            </span>
+          </div>
+        }
+      >
+        <Spline
+          key={`${sceneUrl}-${loadKey}`}
+          scene={sceneUrl}
+          className="w-full h-full block"
+        />
+      </Suspense>
+
+      {/* Futuristic Holographic Corner Reticles */}
+      <div className="pointer-events-none absolute top-4 left-4 w-6 h-6 border-t-2 border-l-2 border-cyan-400/50 z-20" />
+      <div className="pointer-events-none absolute top-4 right-4 w-6 h-6 border-t-2 border-r-2 border-cyan-400/50 z-20" />
+      <div className="pointer-events-none absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-cyan-400/50 z-20" />
+      <div className="pointer-events-none absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-cyan-400/50 z-20" />
+
+      {/* Top Left: Selected Threat Telemetry Badge */}
+      <div className="absolute top-4 left-4 z-20 pointer-events-auto bg-[#0A0F1D]/85 backdrop-blur-md border border-cyan-500/30 p-3 max-w-xs chamfer-sm shadow-[0_0_20px_rgba(0,240,255,0.15)]">
+        <div className="flex items-center space-x-2 text-[10px] text-cyan-300 font-bold uppercase mb-1">
+          <Activity className="w-3.5 h-3.5 text-[#00F0FF] animate-pulse" />
+          <span>3D HOLOGRAPHIC TARGET LOCK</span>
+        </div>
+        {selectedCrisis ? (
+          <div>
+            <div className="font-display-tech text-sm font-bold text-white leading-tight">
+              {selectedCrisis.title}
+            </div>
+            <div className="text-[10px] text-zinc-400 font-mono mt-1">
+              LOC: {selectedCrisis.location.city} ({selectedCrisis.location.lat.toFixed(2)}°, {selectedCrisis.location.lng.toFixed(2)}°)
+            </div>
+            <div className="mt-1.5 flex items-center space-x-2">
+              <span className="text-[9px] px-1.5 py-0.5 bg-red-500/20 text-red-300 border border-red-500/40 rounded font-bold uppercase">
+                DEFCON {selectedCrisis.threatLevel}
+              </span>
+              <span className="text-[9px] text-[#00F0FF] font-semibold uppercase">
+                {selectedCrisis.type}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="text-[11px] text-zinc-400 font-mono">No target locked</div>
+        )}
+      </div>
+
+      {/* Top Right: Spline Scene Presets & Custom URL Controls */}
+      <div className="absolute top-4 right-4 z-20 pointer-events-auto flex flex-col space-y-1.5 bg-[#0A0F1D]/85 backdrop-blur-md border border-cyan-500/30 p-2 text-xs chamfer-sm shadow-2xl">
+        <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest px-1 font-mono">
+          SPLINE 3D PRESETS
+        </div>
+        <div className="flex flex-col space-y-1">
+          {SPLINE_PRESETS.map(preset => (
+            <button
+              key={preset.name}
+              onClick={() => {
+                audio.playClick();
+                setSceneUrl(preset.url);
+                setLoadKey(prev => prev + 1);
+              }}
+              className={`px-2.5 py-1 text-[10px] font-bold uppercase transition-all chamfer-sm text-left truncate ${
+                sceneUrl === preset.url
+                  ? 'bg-cyan-500/25 border border-cyan-400 text-cyan-300 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                  : 'bg-white/5 border border-white/10 text-zinc-400 hover:text-white'
+              }`}
+            >
+              {preset.name}
+            </button>
+          ))}
+          <button
+            onClick={() => { audio.playClick(); setShowUrlModal(true); }}
+            className="px-2.5 py-1 text-[10px] font-bold uppercase bg-white/5 border border-white/10 hover:border-[#FF6A1A] text-zinc-300 hover:text-white transition-colors chamfer-sm text-left"
+          >
+            + Load Custom URL
+          </button>
+          <button
+            onClick={reloadScene}
+            className="px-2.5 py-1 text-[10px] font-bold uppercase bg-white/5 border border-white/10 hover:border-cyan-400 text-zinc-400 hover:text-white transition-colors chamfer-sm flex items-center space-x-1"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Reset 3D Scene</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Bottom Center: Touch & Interaction Guide */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none bg-[#0A0F1D]/80 backdrop-blur-md border border-cyan-500/20 px-4 py-1.5 rounded-full text-[10px] text-zinc-300 font-mono flex items-center space-x-2">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#00F0FF] animate-pulse" />
+        <span>Interactive 3D Spline Touch: Click &amp; Drag to Rotate • Scroll to Zoom</span>
+      </div>
+
+      {/* Custom Spline URL Input Modal */}
+      {showUrlModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 pointer-events-auto">
+          <div className="w-full max-w-md bg-[#0A0F1D] border border-cyan-500/40 p-5 shadow-2xl chamfer-card">
+            <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-3">
+              <h4 className="font-display-tech text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
+                <Box className="w-4 h-4 text-cyan-400" />
+                <span>Load Spline 3D Scene</span>
+              </h4>
+              <button onClick={() => setShowUrlModal(false)} className="text-zinc-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleApplyCustomUrl} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-zinc-300 font-bold uppercase mb-1 text-[10px]">
+                  Spline Scene Export URL (.splinecode)
+                </label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://prod.spline.design/.../scene.splinecode"
+                  value={customInput}
+                  onChange={e => setCustomInput(e.target.value)}
+                  className="w-full bg-[#050811] border border-white/15 px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-400 font-mono text-[11px] chamfer-sm"
+                />
+              </div>
+              <div className="flex justify-end space-x-2 pt-2 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setShowUrlModal(false)}
+                  className="px-3 py-1.5 bg-white/5 border border-white/10 text-zinc-300 font-semibold chamfer-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="chamfer-btn px-4 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold uppercase"
+                >
+                  Load 3D Scene
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function EarthGlobeCanvas({
   crises, selectedCrisisId, onSelectCrisis, focusedLocation, activeMissions
