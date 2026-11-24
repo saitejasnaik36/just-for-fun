@@ -212,6 +212,28 @@ class AudioSynth {
       osc.stop(now + 0.3);
     } catch {}
   }
+
+  playJarvis() {
+    if (this.muted) return;
+    try {
+      this.initCtx();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      [880, 1174.66, 1760].forEach((freq, idx) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = 'sine';
+        const start = now + idx * 0.06;
+        osc.frequency.setValueAtTime(freq, start);
+        gain.gain.setValueAtTime(0.08, start);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.25);
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+        osc.start(start);
+        osc.stop(start + 0.25);
+      });
+    } catch {}
+  }
 }
 
 const audio = new AudioSynth();
@@ -592,6 +614,22 @@ export default function App() {
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'info' | 'success' | 'warn' | 'danger' } | null>(null);
 
+  // Deployment Protection state
+  const [deploymentProtectionEnabled, setDeploymentProtectionEnabled] = useState<boolean>(true);
+  const [pendingDispatch, setPendingDispatch] = useState<{ crisisId: string; teamIds: string[] } | null>(null);
+
+  // J.A.R.V.I.S. Neural AI Assistant state
+  const [jarvisOpen, setJarvisOpen] = useState<boolean>(false);
+  const [jarvisMessages, setJarvisMessages] = useState<Array<{ sender: 'jarvis' | 'user'; text: string; time: string; action?: string }>>([
+    {
+      sender: 'jarvis',
+      text: 'Good day, Director. J.A.R.V.I.S. neural telemetry is online and synchronized with the S.H.I.E.L.D. global defense grid. How may I assist in coordinating tactical operations?',
+      time: '12:00:00'
+    }
+  ]);
+  const [jarvisInput, setJarvisInput] = useState<string>('');
+  const [isJarvisTyping, setIsJarvisTyping] = useState<boolean>(false);
+
   const showToast = useCallback((text: string, type: 'info' | 'success' | 'warn' | 'danger' = 'info') => {
     setToastMessage({ text, type });
     setTimeout(() => {
@@ -755,7 +793,7 @@ export default function App() {
     return () => clearInterval(ticker);
   }, [addLog, showToast]);
 
-  // Dispatch Mission
+  // Dispatch Mission with Deployment Protection
   const handleDispatch = (crisisId: string, teamIds: string[]) => {
     if (role === 'Viewer') return;
     if (teamIds.length === 0) {
@@ -771,6 +809,21 @@ export default function App() {
       showToast('Some operatives are currently deployed or unavailable!', 'warn');
       return;
     }
+
+    // Deployment Protection Authorization Safeguard
+    if (deploymentProtectionEnabled) {
+      audio.playAlert();
+      setPendingDispatch({ crisisId, teamIds });
+      return;
+    }
+
+    executeDispatch(crisisId, teamIds);
+  };
+
+  const executeDispatch = (crisisId: string, teamIds: string[]) => {
+    const targetCrisis = crises.find(c => c.id === crisisId);
+    if (!targetCrisis) return;
+    const team = heroes.filter(h => teamIds.includes(h.id));
 
     const coverage = calculateCoverage(team, targetCrisis.requiredSkills);
     const synergy = calculateSynergy(team);
@@ -793,12 +846,57 @@ export default function App() {
     setHeroes(prev => prev.map(h => teamIds.includes(h.id) ? { ...h, status: 'Deployed' } : h));
     setMissions(prev => [newMission, ...prev]);
 
+    setPendingDispatch(null);
     audio.playDispatch();
     addLog('DISPATCH', `AVENGERS ASSEMBLED: Dispatched to ${targetCrisis.title} (${targetCrisis.location.city}). Success Est: ${successChance}%`, 'info');
     showToast(`Avengers Dispatched to ${targetCrisis.location.city}! Estimated Success: ${successChance}%`, 'info');
 
     setFocusedLocation(targetCrisis.location);
     setActiveTab('COMMAND');
+  };
+
+  // J.A.R.V.I.S. Neural LLM Query Processor
+  const handleJarvisSend = (queryText?: string) => {
+    const prompt = (queryText || jarvisInput).trim();
+    if (!prompt) return;
+
+    audio.playClick();
+    const userTime = new Date().toISOString().substring(11, 19);
+    setJarvisMessages(prev => [...prev, { sender: 'user', text: prompt, time: userTime }]);
+    setJarvisInput('');
+    setIsJarvisTyping(true);
+
+    setTimeout(() => {
+      audio.playJarvis();
+      setIsJarvisTyping(false);
+      const low = prompt.toLowerCase();
+      let reply = '';
+      let action = '';
+
+      if (low.includes('threat') || low.includes('assess') || low.includes('analyze') || low.includes('current')) {
+        const c = selectedCrisis;
+        reply = `Threat assessment for "${c.title}" in ${c.location.city}: Threat Level ${c.threatLevel} (${c.type.toUpperCase()}). Critical requirements detected in ${Object.entries(c.requiredSkills).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([k,v])=>`${k.toUpperCase()} (${v})`).join(' and ')}. Immediate deployment advised.`;
+      } else if (low.includes('recommend') || low.includes('squad') || low.includes('team') || low.includes('assemble')) {
+        handleAutoAssemble(selectedCrisis);
+        reply = `I have run a heuristic synergy match across all active Avengers. The optimal counter-strike team has been loaded into the dispatch matrix for ${selectedCrisis.title}.`;
+        action = 'SQUAD_ASSEMBLED';
+      } else if (low.includes('shield') || low.includes('grid') || low.includes('planetary') || low.includes('defense') || low.includes('status')) {
+        reply = `Planetary defense mesh integrity is at 98.4%. All 4 S.H.I.E.L.D. Orbital Eye satellites are operational. ${crises.filter(c => c.status !== 'Resolved' && c.status !== 'Contained').length} active threat beacons detected worldwide.`;
+      } else if (low.includes('contain') || low.includes('resolve')) {
+        if (role === 'Director') {
+          handleResolve(selectedCrisis.id);
+          reply = `Directive executed, Director. Threat beacon "${selectedCrisis.title}" has been contained and flagged in the defense register.`;
+        } else {
+          reply = `Containment override requires S.H.I.E.L.D. Director clearance. Your current terminal authorization is: ${role}.`;
+        }
+      } else if (low.includes('iron man') || low.includes('stark')) {
+        reply = `Mr. Stark's Mark LXXXV nanotech armor is fully charged and standing by at Avengers HQ.`;
+      } else {
+        reply = `Directive received: "${prompt}". Global telemetry indicates DEFCON ${globalThreatLevel}. All defense subsystems are standing by.`;
+      }
+
+      setJarvisMessages(prev => [...prev, { sender: 'jarvis', text: reply, time: new Date().toISOString().substring(11, 19), action }]);
+    }, 600);
   };
 
   // Auto-Assemble Algorithm
@@ -916,22 +1014,28 @@ export default function App() {
           TOP COMMAND HEADER
       ========================================================================= */}
       <header className="h-16 border-b border-white/10 bg-[#0B0F19]/90 backdrop-blur-md flex items-stretch justify-between z-40 relative px-2 sm:px-4">
-        {/* BRAND & CALLSIGN */}
-        <div className="flex items-center space-x-3 pr-4 border-r border-white/10 min-w-[220px]">
-          <div className="relative flex items-center justify-center w-9 h-9 bg-gradient-to-br from-[#FF6A1A] to-[#E55A10] chamfer-sm shadow-[0_0_15px_rgba(255,106,26,0.5)]">
-            <Shield className="w-5 h-5 text-white" />
+        {/* BRAND & CALLSIGN WITH MARVEL THEME */}
+        <div className="flex items-center space-x-3 pr-4 border-r border-white/10 min-w-[240px]">
+          {/* MARVEL BRAND BADGE */}
+          <div className="flex items-center space-x-1.5 flex-shrink-0">
+            <span className="font-display-tech font-black tracking-tighter text-xs bg-[#E23636] text-white px-2 py-1 rounded shadow-[0_0_12px_rgba(226,54,54,0.6)] border border-red-400/40">
+              MARVEL
+            </span>
           </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="font-display-tech font-black tracking-widest text-lg text-white leading-none">
+          <div className="relative flex items-center justify-center w-8 h-8 bg-gradient-to-br from-[#FF6A1A] to-[#E55A10] chamfer-sm shadow-[0_0_15px_rgba(255,106,26,0.5)] flex-shrink-0">
+            <Shield className="w-4 h-4 text-white" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center space-x-1.5">
+              <span className="font-display-tech font-black tracking-widest text-base text-white leading-none truncate">
                 S.H.I.E.L.D.
               </span>
-              <span className="text-[9px] font-bold px-1.5 py-0.5 bg-[#FF6A1A]/20 text-[#FF6A1A] border border-[#FF6A1A]/40 tracking-wider uppercase chamfer-sm">
+              <span className="text-[8px] font-bold px-1.5 py-0.2 bg-[#FF6A1A]/20 text-[#FF6A1A] border border-[#FF6A1A]/40 tracking-wider uppercase chamfer-sm">
                 COMMAND
               </span>
             </div>
-            <p className="text-[10px] text-zinc-400 tracking-tight truncate max-w-[200px]">
-              Strategic Defense Operations Grid
+            <p className="text-[9px] text-zinc-400 tracking-tight truncate max-w-[170px] font-mono">
+              STARK DEFENSE MATRIX
             </p>
           </div>
         </div>
@@ -952,7 +1056,7 @@ export default function App() {
                 onClick={() => { audio.playClick(); setActiveTab(item.id as any); }}
                 className={`px-3 py-2 transition-all flex items-center space-x-2 chamfer-sm relative ${
                   isActive
-                    ? 'text-white font-bold bg-[#FF6A1A] shadow-[0_0_14px_rgba(255,106,26,0.4)]'
+                    ? 'text-white font-bold bg-[#E23636] shadow-[0_0_14px_rgba(226,54,54,0.5)] border border-red-400/40'
                     : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/10'
                 }`}
               >
@@ -964,7 +1068,7 @@ export default function App() {
         </nav>
 
         {/* METRICS STRIP */}
-        <div className="hidden xl:flex items-center space-x-5 px-4 border-r border-white/10 text-[11px]">
+        <div className="hidden xl:flex items-center space-x-4 px-4 border-r border-white/10 text-[11px]">
           <div className="flex items-center space-x-2">
             <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444] animate-ping" />
             <span className="text-zinc-400 uppercase font-semibold">DEFCON:</span>
@@ -984,10 +1088,50 @@ export default function App() {
           </div>
         </div>
 
-        {/* ROLE, SIMULATION & AUDIO TOGGLES */}
+        {/* ROLE, J.A.R.V.I.S., DEPLOYMENT PROTECTION & AUDIO TOGGLES */}
         <div className="flex items-center space-x-2 pl-2">
+          {/* DEPLOYMENT PROTECTION TOGGLE */}
+          <button
+            onClick={() => {
+              audio.playClick();
+              setDeploymentProtectionEnabled(!deploymentProtectionEnabled);
+              showToast(
+                !deploymentProtectionEnabled
+                  ? 'Deployment Protection Protocol: ACTIVE'
+                  : 'Deployment Protection Protocol: BYPASS/OVERRIDE',
+                !deploymentProtectionEnabled ? 'success' : 'warn'
+              );
+            }}
+            className={`hidden md:flex items-center space-x-1.5 px-2.5 py-1 text-[10px] font-bold uppercase transition-all chamfer-sm border ${
+              deploymentProtectionEnabled
+                ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+                : 'bg-amber-950/70 border-amber-500/50 text-amber-300'
+            }`}
+            title="Toggle Pre-Flight Deployment Security Safeguards"
+          >
+            <Shield className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{deploymentProtectionEnabled ? 'PROT: ACTIVE' : 'PROT: BYPASS'}</span>
+          </button>
+
+          {/* J.A.R.V.I.S. AI CO-PILOT BUTTON */}
+          <button
+            onClick={() => {
+              audio.playJarvis();
+              setJarvisOpen(!jarvisOpen);
+            }}
+            className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-all chamfer-sm flex items-center space-x-2 ${
+              jarvisOpen
+                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_16px_rgba(0,240,255,0.6)] border border-cyan-300'
+                : 'bg-[#0E1726] border border-cyan-500/40 text-cyan-300 hover:border-cyan-300 hover:text-white shadow-[0_0_10px_rgba(0,240,255,0.2)]'
+            }`}
+            title="Open J.A.R.V.I.S. AI Tactical Assistant"
+          >
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+            <span className="font-display-tech">J.A.R.V.I.S.</span>
+          </button>
+
           {/* ROLE SELECTOR */}
-          <div className="flex items-center space-x-1.5 bg-[#0F172A] border border-white/15 px-2.5 py-1.5 chamfer-sm">
+          <div className="flex items-center space-x-1.5 bg-[#0F172A] border border-white/15 px-2 py-1.5 chamfer-sm">
             <Key className="w-3.5 h-3.5 text-[#FF6A1A]" />
             <select
               value={role}
@@ -1289,6 +1433,251 @@ export default function App() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* =========================================================================
+          S.H.I.E.L.D. PRE-FLIGHT DEPLOYMENT PROTECTION MODAL
+      ========================================================================= */}
+      {pendingDispatch && (() => {
+        const targetCrisis = crises.find(c => c.id === pendingDispatch.crisisId);
+        const assignedHeroes = heroes.filter(h => pendingDispatch.teamIds.includes(h.id));
+        if (!targetCrisis) return null;
+
+        const coverage = calculateCoverage(assignedHeroes, targetCrisis.requiredSkills);
+        const synergy = calculateSynergy(assignedHeroes);
+        const successChance = Math.min(98, Math.max(15, Math.round(coverage * 0.7 + synergy * 0.3)));
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+            <div className="w-full max-w-lg bg-[#0B101C] border-2 border-emerald-500/60 p-6 shadow-[0_0_40px_rgba(16,185,129,0.35)] chamfer-card relative">
+              <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
+                <div className="flex items-center space-x-2">
+                  <Shield className="w-5 h-5 text-emerald-400 animate-pulse" />
+                  <div>
+                    <h3 className="font-display-tech text-sm font-bold text-white uppercase tracking-wider">
+                      Deployment Protection Protocol
+                    </h3>
+                    <span className="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">
+                      AUTHORIZATION SECURITY CLEARANCE GATE
+                    </span>
+                  </div>
+                </div>
+                <button onClick={() => setPendingDispatch(null)} className="text-zinc-400 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4 text-xs font-mono">
+                {/* Target Information */}
+                <div className="bg-[#060A12] border border-white/10 p-3 chamfer-sm">
+                  <div className="flex justify-between items-center text-[10px] text-zinc-400 uppercase mb-1">
+                    <span>Target Designation</span>
+                    <span className="text-[#FF6A1A] font-bold">DEFCON {targetCrisis.threatLevel}</span>
+                  </div>
+                  <div className="text-sm font-bold text-white">{targetCrisis.title}</div>
+                  <div className="text-zinc-400 text-[11px] mt-0.5">
+                    Sector: {targetCrisis.location.city}, {targetCrisis.location.country}
+                  </div>
+                </div>
+
+                {/* Assigned Operatives */}
+                <div>
+                  <span className="text-zinc-400 text-[10px] uppercase font-bold tracking-wider block mb-1.5">
+                    Assigned Strike Squad ({assignedHeroes.length} Operatives)
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {assignedHeroes.map(h => (
+                      <div key={h.id} className="p-2 bg-[#0E1524] border border-white/10 flex items-center space-x-2 chamfer-sm">
+                        <span className="text-lg">{h.avatar}</span>
+                        <div className="min-w-0">
+                          <div className="font-bold text-white truncate text-[11px]">{h.alias}</div>
+                          <div className="text-[9px] text-zinc-400">STM: {h.stamina}% • HP: {h.health}%</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Pre-Launch Verification Checkpoints */}
+                <div className="bg-[#080E1A] border border-emerald-500/30 p-3 space-y-1.5 text-[11px]">
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-emerald-400 block mb-1">
+                    Pre-Launch Safety Checkpoints
+                  </span>
+                  <div className="flex items-center space-x-2 text-zinc-200">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                    <span>Orbital S.H.I.E.L.D. Satellites synchronized to coordinates</span>
+                  </div>
+                  <div className="flex items-center space-x-2 text-zinc-200">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                    <span>Civilian evacuation perimeter established in {targetCrisis.location.city}</span>
+                  </div>
+                  <div className="flex items-center space-x-2 text-zinc-200">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                    <span>Stark nanotech kinetic barrier armed</span>
+                  </div>
+                </div>
+
+                {/* Success Probability */}
+                <div className="flex items-center justify-between p-2.5 bg-[#060A12] border border-white/10 chamfer-sm">
+                  <span className="text-zinc-400 text-[11px]">CALCULATED MISSION SUCCESS:</span>
+                  <span className="text-sm font-bold text-emerald-400">{successChance}% PROBABILITY</span>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center justify-end space-x-3 pt-3 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setPendingDispatch(null)}
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300 font-semibold chamfer-sm uppercase text-xs"
+                  >
+                    Abort Launch
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => executeDispatch(pendingDispatch.crisisId, pendingDispatch.teamIds)}
+                    className="chamfer-btn px-6 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 font-bold text-white uppercase tracking-wider text-xs shadow-[0_0_15px_rgba(16,185,129,0.5)] flex items-center space-x-1.5"
+                  >
+                    <Shield className="w-4 h-4" />
+                    <span>Authorize &amp; Launch</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* =========================================================================
+          J.A.R.V.I.S. AI CO-PILOT NEURAL TERMINAL DRAWER
+      ========================================================================= */}
+      {jarvisOpen && (
+        <div className="fixed bottom-6 right-6 z-50 w-full max-w-md bg-[#080D1A]/95 backdrop-blur-xl border-2 border-cyan-400/60 shadow-[0_0_50px_rgba(0,240,255,0.35)] chamfer-card flex flex-col h-[520px] overflow-hidden">
+          {/* J.A.R.V.I.S. Header */}
+          <div className="p-3.5 bg-gradient-to-r from-[#0C1527] to-[#081220] border-b border-cyan-500/30 flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              <div className="relative flex items-center justify-center w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.6)]">
+                <span className="w-3 h-3 rounded-full bg-cyan-400 animate-ping" />
+                <span className="absolute w-2 h-2 rounded-full bg-white" />
+              </div>
+              <div>
+                <h3 className="font-display-tech text-xs font-black text-white tracking-widest flex items-center space-x-1.5">
+                  <span>J.A.R.V.I.S.</span>
+                  <span className="text-[9px] px-1.5 py-0.2 bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 rounded">
+                    AI CO-PILOT
+                  </span>
+                </h3>
+                <span className="text-[9px] text-zinc-400 font-mono tracking-tight">
+                  STARK NEURAL TACTICAL INTERFACE
+                </span>
+              </div>
+            </div>
+
+            {/* Simulated Audio Frequency Visualizer */}
+            <div className="flex items-center space-x-0.5 h-4 px-2 bg-black/40 rounded border border-cyan-500/20">
+              {[40, 90, 60, 100, 75, 45, 80].map((h, i) => (
+                <div
+                  key={i}
+                  className="w-1 bg-cyan-400 rounded-full animate-pulse"
+                  style={{ height: `${h}%`, animationDelay: `${i * 120}ms` }}
+                />
+              ))}
+            </div>
+
+            <button
+              onClick={() => { audio.playClick(); setJarvisOpen(false); }}
+              className="text-zinc-400 hover:text-white p-1"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Quick Action Prompt Chips */}
+          <div className="px-3 py-2 bg-[#050912] border-b border-white/5 flex items-center space-x-1.5 overflow-x-auto custom-scrollbar">
+            {[
+              { label: 'Assess Current Threat', query: 'Analyze and assess the currently selected crisis threat' },
+              { label: 'Recommend Strike Squad', query: 'Recommend the optimal strike team for this crisis' },
+              { label: 'Planetary Shield Status', query: 'What is the current planetary defense grid status?' },
+              { label: 'Operative Diagnostics', query: 'Run health and stamina diagnostics on all active heroes' }
+            ].map(chip => (
+              <button
+                key={chip.label}
+                onClick={() => handleJarvisSend(chip.query)}
+                className="whitespace-nowrap px-2.5 py-1 bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-500/30 text-cyan-200 text-[10px] font-mono font-semibold rounded chamfer-sm transition-all shadow-[0_0_6px_rgba(0,240,255,0.15)] flex-shrink-0"
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Conversation Stream */}
+          <div className="flex-1 overflow-y-auto p-3.5 space-y-3 custom-scrollbar bg-[#060A14]/70">
+            {jarvisMessages.map((msg, idx) => (
+              <div
+                key={idx}
+                className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
+              >
+                <div className="flex items-center space-x-1.5 text-[9px] text-zinc-500 font-mono mb-1 px-1">
+                  <span>{msg.sender === 'user' ? 'DIRECTOR OVERRIDE' : 'J.A.R.V.I.S.'}</span>
+                  <span>•</span>
+                  <span>{msg.time}</span>
+                </div>
+                <div
+                  className={`p-3 max-w-[88%] text-xs font-mono leading-relaxed chamfer-sm ${
+                    msg.sender === 'user'
+                      ? 'bg-[#E23636]/20 border border-red-500/40 text-red-100 shadow-[0_0_10px_rgba(226,54,54,0.2)]'
+                      : 'bg-[#0E1A2E] border border-cyan-500/40 text-cyan-100 shadow-[0_0_12px_rgba(0,240,255,0.15)]'
+                  }`}
+                >
+                  {msg.text}
+                </div>
+              </div>
+            ))}
+
+            {isJarvisTyping && (
+              <div className="flex items-center space-x-2 text-cyan-400 text-xs font-mono p-2">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                <span>J.A.R.V.I.S. calculating neural heuristic response...</span>
+              </div>
+            )}
+          </div>
+
+          {/* Message Input Form */}
+          <form
+            onSubmit={(e) => { e.preventDefault(); handleJarvisSend(); }}
+            className="p-3 bg-[#090F1C] border-t border-cyan-500/30 flex items-center space-x-2"
+          >
+            <input
+              type="text"
+              placeholder="Ask J.A.R.V.I.S. tactical query or directive..."
+              value={jarvisInput}
+              onChange={e => setJarvisInput(e.target.value)}
+              className="flex-1 bg-[#050811] border border-cyan-500/30 px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-400 font-mono chamfer-sm"
+            />
+            <button
+              type="submit"
+              className="chamfer-btn px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 font-bold text-white text-xs uppercase shadow-[0_0_10px_rgba(0,240,255,0.4)]"
+            >
+              Execute
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Floating Bottom-Right J.A.R.V.I.S. Quick Trigger (When Closed) */}
+      {!jarvisOpen && (
+        <button
+          onClick={() => {
+            audio.playJarvis();
+            setJarvisOpen(true);
+          }}
+          className="fixed bottom-6 right-6 z-40 p-3.5 bg-[#0B1526]/95 border-2 border-cyan-400 rounded-full shadow-[0_0_25px_rgba(0,240,255,0.5)] hover:scale-105 transition-transform flex items-center justify-center group"
+          title="Activate J.A.R.V.I.S. AI Co-Pilot"
+        >
+          <span className="w-5 h-5 rounded-full bg-cyan-400 animate-ping absolute opacity-60" />
+          <div className="w-4 h-4 rounded-full bg-gradient-to-br from-cyan-300 to-blue-500 flex items-center justify-center">
+            <Sparkles className="w-2.5 h-2.5 text-black" />
+          </div>
+        </button>
       )}
     </div>
   );
@@ -1808,15 +2197,15 @@ const CONTINENTS_DATA: [number, number][][] = [
 ];
 
 // ============================================================================
-// SPLINE 3D HOLOGRAPHIC VIEWPORT
+// SPLINE 3D PLANETARY EARTH STATUS & HOLOGRAPHIC STATION
 // ============================================================================
 interface SplineHologramViewportProps {
   selectedCrisis?: Crisis;
 }
 
 const SPLINE_PRESETS = [
-  { name: 'Holo Cyber Core', url: 'https://prod.spline.design/6Wq1Q7YGyM-iab9i/scene.splinecode' },
-  { name: 'Quantum Node', url: 'https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode' }
+  { name: 'Holo Earth Orbit', url: 'https://prod.spline.design/6Wq1Q7YGyM-iab9i/scene.splinecode' },
+  { name: 'Quantum Core', url: 'https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode' }
 ];
 
 function SplineHologramViewport({ selectedCrisis }: SplineHologramViewportProps) {
@@ -1847,7 +2236,7 @@ function SplineHologramViewport({ selectedCrisis }: SplineHologramViewportProps)
           <div className="w-full h-full flex flex-col items-center justify-center space-y-3 bg-[#03060C]">
             <div className="w-14 h-14 border-2 border-cyan-500/20 border-t-[#00F0FF] rounded-full animate-spin" />
             <span className="font-display-tech text-xs tracking-widest uppercase text-cyan-400 font-bold animate-pulse">
-              STREAMING 3D HOLOGRAPHIC MATRIX...
+              STREAMING SPLINE 3D PLANETARY MATRIX...
             </span>
           </div>
         }
@@ -1866,10 +2255,10 @@ function SplineHologramViewport({ selectedCrisis }: SplineHologramViewportProps)
       <div className="pointer-events-none absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-cyan-400/50 z-20" />
 
       {/* Top Left: Selected Threat Telemetry Badge */}
-      <div className="absolute top-4 left-4 z-20 pointer-events-auto bg-[#0A0F1D]/85 backdrop-blur-md border border-cyan-500/30 p-3 max-w-xs chamfer-sm shadow-[0_0_20px_rgba(0,240,255,0.15)]">
+      <div className="absolute top-4 left-4 z-20 pointer-events-auto bg-[#0A0F1D]/90 backdrop-blur-md border border-cyan-500/30 p-3.5 max-w-xs chamfer-sm shadow-[0_0_20px_rgba(0,240,255,0.15)]">
         <div className="flex items-center space-x-2 text-[10px] text-cyan-300 font-bold uppercase mb-1">
           <Activity className="w-3.5 h-3.5 text-[#00F0FF] animate-pulse" />
-          <span>3D HOLOGRAPHIC TARGET LOCK</span>
+          <span>3D EARTH DEFENSE TELEMETRY</span>
         </div>
         {selectedCrisis ? (
           <div>
@@ -1877,9 +2266,9 @@ function SplineHologramViewport({ selectedCrisis }: SplineHologramViewportProps)
               {selectedCrisis.title}
             </div>
             <div className="text-[10px] text-zinc-400 font-mono mt-1">
-              LOC: {selectedCrisis.location.city} ({selectedCrisis.location.lat.toFixed(2)}°, {selectedCrisis.location.lng.toFixed(2)}°)
+              TARGET SECTOR: {selectedCrisis.location.city} ({selectedCrisis.location.lat.toFixed(2)}°, {selectedCrisis.location.lng.toFixed(2)}°)
             </div>
-            <div className="mt-1.5 flex items-center space-x-2">
+            <div className="mt-2 flex items-center space-x-2">
               <span className="text-[9px] px-1.5 py-0.5 bg-red-500/20 text-red-300 border border-red-500/40 rounded font-bold uppercase">
                 DEFCON {selectedCrisis.threatLevel}
               </span>
@@ -1889,14 +2278,42 @@ function SplineHologramViewport({ selectedCrisis }: SplineHologramViewportProps)
             </div>
           </div>
         ) : (
-          <div className="text-[11px] text-zinc-400 font-mono">No target locked</div>
+          <div className="text-[11px] text-zinc-400 font-mono">Planetary perimeter secure</div>
         )}
+      </div>
+
+      {/* Bottom Left: Live Planetary Defense Status Box */}
+      <div className="hidden md:flex absolute bottom-4 left-4 z-20 pointer-events-auto bg-[#070C18]/90 backdrop-blur-md border border-cyan-500/30 p-3.5 chamfer-sm max-w-xs flex-col space-y-2 text-[10px] font-mono shadow-2xl">
+        <div className="flex items-center justify-between text-cyan-300 font-bold uppercase pb-1 border-b border-white/10">
+          <span className="flex items-center space-x-1.5">
+            <Shield className="w-3.5 h-3.5 text-cyan-400" />
+            <span>PLANETARY SHIELD STATUS</span>
+          </span>
+          <span className="text-emerald-400 font-bold">ACTIVE</span>
+        </div>
+        <div className="space-y-1 text-zinc-300">
+          <div className="flex justify-between">
+            <span className="text-zinc-400">Shield Grid Integrity:</span>
+            <span className="font-bold text-emerald-400">98.4%</span>
+          </div>
+          <div className="w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
+            <div className="h-full bg-emerald-400" style={{ width: '98.4%' }} />
+          </div>
+          <div className="flex justify-between pt-1">
+            <span className="text-zinc-400">Orbital Eye Satellites:</span>
+            <span className="text-cyan-300 font-bold">4/4 SYNCED</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-zinc-400">Stark Nanotech Grid:</span>
+            <span className="text-amber-400 font-bold">ARMED</span>
+          </div>
+        </div>
       </div>
 
       {/* Top Right: Spline Scene Presets & Custom URL Controls */}
       <div className="absolute top-4 right-4 z-20 pointer-events-auto flex flex-col space-y-1.5 bg-[#0A0F1D]/85 backdrop-blur-md border border-cyan-500/30 p-2 text-xs chamfer-sm shadow-2xl">
         <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest px-1 font-mono">
-          SPLINE 3D PRESETS
+          3D EARTH SCENE PRESETS
         </div>
         <div className="flex flex-col space-y-1">
           {SPLINE_PRESETS.map(preset => (
@@ -1935,7 +2352,7 @@ function SplineHologramViewport({ selectedCrisis }: SplineHologramViewportProps)
       {/* Bottom Center: Touch & Interaction Guide */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none bg-[#0A0F1D]/80 backdrop-blur-md border border-cyan-500/20 px-4 py-1.5 rounded-full text-[10px] text-zinc-300 font-mono flex items-center space-x-2">
         <span className="w-1.5 h-1.5 rounded-full bg-[#00F0FF] animate-pulse" />
-        <span>Interactive 3D Spline Touch: Click &amp; Drag to Rotate • Scroll to Zoom</span>
+        <span>Spline 3D Touch: Click &amp; Drag to Rotate Earth • Scroll to Zoom</span>
       </div>
 
       {/* Custom Spline URL Input Modal */}
@@ -1945,7 +2362,7 @@ function SplineHologramViewport({ selectedCrisis }: SplineHologramViewportProps)
             <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-3">
               <h4 className="font-display-tech text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
                 <Box className="w-4 h-4 text-cyan-400" />
-                <span>Load Spline 3D Scene</span>
+                <span>Load Spline 3D Earth Scene</span>
               </h4>
               <button onClick={() => setShowUrlModal(false)} className="text-zinc-400 hover:text-white">
                 <X className="w-4 h-4" />
